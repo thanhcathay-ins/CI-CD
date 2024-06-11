@@ -16,6 +16,8 @@ pipeline {
                             env."${key}" = value
                         }
                     }
+                    // Kiểm tra biến môi trường
+                    echo "LOG_DIR is set to: ${env.LOG_DIR}"
                 }
             }
         }
@@ -26,11 +28,10 @@ pipeline {
             }
         }
 
-        
         stage('Deploy') {
             steps {
                 script {
-                    // stop.sh
+                    // stop_app.sh
                     writeFile file: 'stop_app.sh', text: '''
                         #!/bin/bash
                         
@@ -50,7 +51,7 @@ pipeline {
                     // Wait 5s
                     sh 'sleep 5'
                     
-                    // start.sh
+                    // start_app.sh
                     writeFile file: 'start_app.sh', text: """
                         #!/bin/bash
                         LOG_DIR="${env.LOG_DIR}"
@@ -63,8 +64,12 @@ pipeline {
                     """
 
                     sh 'chmod +x start_app.sh'
+                    // Xác minh rằng start_app.sh có nội dung đúng
+                    sh 'cat start_app.sh'
                     sh './start_app.sh'
                     
+                    // Kiểm tra xem ứng dụng có đang chạy không
+                    sh 'ps aux | grep demo-0.0.1-SNAPSHOT.jar'
                 }
             }
         }

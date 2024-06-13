@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKER_CREDENTIALS_ID = 'thanhcathay-ins-user' 
-        DOCKER_IMAGE_NAME = 'thanhcathay/demo-java-app'
+        DOCKER_IMAGE_NAME = 'duonghuuthanh/demo-java-app'
         KUBECONFIG_PATH = '/var/jenkins_home/.kube/config' // Đường dẫn tới kubeconfig trong container Jenkins
         CLUSTER_NAME = 'docker-desktop'
     }

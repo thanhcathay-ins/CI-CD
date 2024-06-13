@@ -1,6 +1,13 @@
 pipeline {
     agent any
 
+    environment {
+        DOCKER_CREDENTIALS_ID = 'thanhcathay-ins-user' 
+        DOCKER_IMAGE_NAME = 'thanhcathay/demo-java-app'
+        KUBECONFIG_PATH = '/var/jenkins_home/.kube/config' // Đường dẫn tới kubeconfig trong container Jenkins
+        CLUSTER_NAME = 'docker-desktop'
+    }
+
     stages {
         stage('Load Env') {
             steps {
@@ -16,62 +23,69 @@ pipeline {
                             env."${key}" = value
                         }
                     }
-                    // Kiểm tra biến môi trường
-                    echo "LOG_DIR is set to: ${env.LOG_DIR}"
                 }
             }
         }
 
         stage('Build') {
             steps {
+                sh 'echo Building...'
                 sh 'mvn clean install'
             }
         }
 
-        stage('Deploy') {
+        stage('Set Docker Image Tag') {
             steps {
                 script {
-                    // stop_app.sh
-                    writeFile file: 'stop_app.sh', text: '''
-                        #!/bin/bash
-                        
-                        # Dừng ứng dụng Java cũ nếu đang chạy
-                        OLD_PID=$(ps -ef | grep '[j]ava -jar target/demo-0.0.1-SNAPSHOT.jar' | awk '{print $2}')
-                        if [ -n "$OLD_PID" ]; then
-                            echo "Stopping old application with PID $OLD_PID"
-                            kill -9 $OLD_PID
-                        else
-                            echo "No old application running"
-                        fi
-                    '''
+                    env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.DOCKER_IMAGE_TAG = "1.0.${env.BUILD_NUMBER}-${env.GIT_COMMIT}" // Sử dụng số build và Git commit SHA
+                }
+            }
+        }
 
-                    sh 'chmod +x stop_app.sh'
-                    sh './stop_app.sh'
-                    
-                    // Wait 5s
-                    sh 'sleep 5'
-                    
-                    // start_app.sh
-                    writeFile file: 'start_app.sh', text: """
-                        #!/bin/bash
-                        LOG_DIR="${env.LOG_DIR}"
-                        
-                        # Tạo thư mục log nếu chưa tồn tại
-                        mkdir -p \$LOG_DIR
-
-                        # Chạy ứng dụng mới với nohup và disown để chạy ngầm
-                        nohup java -jar target/demo-0.0.1-SNAPSHOT.jar --server.port=80 > \$LOG_DIR/app.log 2>&1 &
+        stage('Build Image') {
+            steps {
+                script {
+                    sh 'echo Building Docker Image...'
+                    sh """
+                    docker build -t ${env.DOCKER_IMAGE_NAME}:${env.DOCKER_IMAGE_TAG} --build-arg JAR_FILE=target/demo-0.0.1-SNAPSHOT.jar .
                     """
+                }
+            }
+        }
 
-                    sh 'chmod +x start_app.sh'
-                    // Xác minh rằng start_app.sh có nội dung đúng
-                    sh 'cat start_app.sh'
-                    sh './start_app.sh'
-                    
-                    // Kiểm tra xem ứng dụng có đang chạy không
-                    sh 'ps aux | grep demo-0.0.1-SNAPSHOT.jar'
+        stage('Push Image') {
+            steps {
+                script {
+                    docker.withRegistry('', env.DOCKER_CREDENTIALS_ID) {
+                        sh 'echo Pushing Docker Image...'
+                        sh "docker push ${env.DOCKER_IMAGE_NAME}:${env.DOCKER_IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+
+        stage('Update Deployment YAML') {
+            steps {
+                script {
+                    def yaml = readFile(file: 'k8s/deployment-service.yaml')
+                    def newYaml = yaml.replaceAll(/\$\{DOCKER_IMAGE_NAME\}/, "${env.DOCKER_IMAGE_NAME}")
+                                     .replaceAll(/\$\{DOCKER_IMAGE_TAG\}/, "${env.DOCKER_IMAGE_TAG}")
+                    echo "Updated YAML: ${newYaml}"
+                    writeFile(file: 'k8s/deployment-service.yaml', text: newYaml)
+                }
+            }
+        }
+
+        stage('Deploy to K8s') {
+            steps {
+                script {
+                    withEnv(["KUBECONFIG=${env.KUBECONFIG_PATH}"]) {
+                        sh """
+                        kubectl config use-context ${env.CLUSTER_NAME}kubectl apply -f k8s/deployment-service.yaml
+                        """
+                    }
                 }
             }
         }
     }
-}
